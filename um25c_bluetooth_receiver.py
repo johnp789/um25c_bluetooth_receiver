@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 '''
 https://sigrok.org/wiki/RDTech_UM24C
 
@@ -45,7 +44,6 @@ All byte offsets are in decimal, and inclusive. All values are big-endian and un
 127       Current screen (same order as on device)
 128 - 129 Stop marker (always 0xfff1)
 '''
-
 '''
 on archlinux:
 sudo pacman -Sy bluez bluez-firmware bluez-utils bluez-tools python-pybluez
@@ -61,9 +59,9 @@ sudo bluetoothctl
 '''
 
 import bluetooth
-import binascii
 import struct
 import time
+
 
 def connect_to_usb_tester(bt_addr):
     sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
@@ -80,6 +78,7 @@ def connect_to_usb_tester(bt_addr):
         raise e
     return sock
 
+
 def read_data(sock):
     sock.send(bytes([0xF0]))
     d = bytes()
@@ -88,24 +87,27 @@ def read_data(sock):
     assert len(d) == 130, len(d)
     return d
 
+
 def read_measurements(sock):
     try:
         d = read_data(sock)
-    except bluetooth.btcommon.BluetoothError as e:
-        # print("read_measurements", str(e))
+    except bluetooth.btcommon.BluetoothError:
         return None
     assert d[0:2] == bytes([0x09, 0xc9])
     assert d[-2:] == bytes([0xff, 0xf1])
-    voltage, current, power = [x/1000 for x in struct.unpack('!HHI', d[2:10])]
+    voltage, current, power = [
+        x / 1000 for x in struct.unpack('!HHI', d[2:10])
+    ]
     current *= 0.1
-    temp_celsius, temp_fahrenheit = struct.unpack('!HH', d[10:14])
-    usb_data_pos_voltage, usb_data_neg_voltage = [x/100 for x in struct.unpack('!HH', d[96:100])]
+    temp_celsius = struct.unpack('!H', d[10:12])[0]
+    usb_data_pos_voltage, usb_data_neg_voltage = [
+        x / 100 for x in struct.unpack('!HH', d[96:100])
+    ]
     charging_mode = d[100]
     accum_mah = struct.unpack('!I', d[102:106])[0]
     accum_mwh = struct.unpack('!I', d[106:110])[0]
     del d
     del sock
-    del temp_fahrenheit
     return locals()
 
 
@@ -114,27 +116,28 @@ def connect():
         try:
             sock = connect_to_usb_tester(bt_addr)
             break
-        except bluetooth.btcommon.BluetoothError as e:
-            # print("connect", str(e))
+        except bluetooth.btcommon.BluetoothError:
             time.sleep(1)
+        except KeyboardInterrupt:
+            return None
     return sock
+
 
 def measurements(bt_addr):
     while True:
-        sock = connect()
         try:
-            try:
-                while True:
-                    d = read_measurements(sock)
-                    if d:
-                        yield d
-                    else:
-                        break
-            except KeyboardInterrupt:
-                break
+            sock = connect()
+            while sock:
+                d = read_measurements(sock)
+                if d:
+                    yield d
+                else:
+                    time.sleep(1)
+                    break
+        except KeyboardInterrupt:
+            break
         finally:
-            sock.close()
-            time.sleep(1)
+            if sock: sock.close()
 
 
 if __name__ == '__main__':
