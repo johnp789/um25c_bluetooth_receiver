@@ -61,6 +61,7 @@ sudo bluetoothctl
 '''
 
 import bluetooth
+import binascii
 import struct
 import time
 
@@ -88,27 +89,56 @@ def read_data(sock):
     return d
 
 def read_measurements(sock):
-    d = read_data(sock)
-    assert d[0:2] == bytes([0x09, 0x63])
+    try:
+        d = read_data(sock)
+    except bluetooth.btcommon.BluetoothError as e:
+        # print("read_measurements", str(e))
+        return None
+    assert d[0:2] == bytes([0x09, 0xc9])
     assert d[-2:] == bytes([0xff, 0xf1])
     voltage, current, power = [x/1000 for x in struct.unpack('!HHI', d[2:10])]
+    current *= 0.1
     temp_celsius, temp_fahrenheit = struct.unpack('!HH', d[10:14])
     usb_data_pos_voltage, usb_data_neg_voltage = [x/100 for x in struct.unpack('!HH', d[96:100])]
     charging_mode = d[100]
+    accum_mah = struct.unpack('!I', d[102:106])[0]
+    accum_mwh = struct.unpack('!I', d[106:110])[0]
     del d
     del sock
+    del temp_fahrenheit
     return locals()
+
+
+def connect():
+    while True:
+        try:
+            sock = connect_to_usb_tester(bt_addr)
+            break
+        except bluetooth.btcommon.BluetoothError as e:
+            # print("connect", str(e))
+            time.sleep(1)
+    return sock
+
+def measurements(bt_addr):
+    while True:
+        sock = connect()
+        try:
+            try:
+                while True:
+                    d = read_measurements(sock)
+                    if d:
+                        yield d
+                    else:
+                        break
+            except KeyboardInterrupt:
+                break
+        finally:
+            sock.close()
+            time.sleep(1)
+
 
 if __name__ == '__main__':
     import sys
     bt_addr = sys.argv[1]
-    sock = connect_to_usb_tester(bt_addr)
-    try:
-        try:
-            while True:
-                print(read_measurements(sock))
-        except KeyboardInterrupt:
-            pass
-    finally:
-        sock.close()
-
+    for d in measurements(bt_addr):
+        print(d)
